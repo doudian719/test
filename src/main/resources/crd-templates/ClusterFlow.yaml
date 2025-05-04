@@ -1,0 +1,20 @@
+apiVersion: logging.banzaicloud.io/v1beta1   # API group and version for Rancher Logging CRDs
+kind: ClusterFlow
+metadata:
+  name: kube-system-logs                    # The name of this ClusterFlow
+spec:
+  # Select logs from the kube-system namespace
+  match:
+    - select:
+        namespaces:
+          - kube-system
+
+  # Add a metadata field "namespace" to each log record
+  filters:
+    - record_modifier:
+        record:
+          namespace: "kube-system"
+
+  # Reference the ClusterOutput named elasticsearch-output
+  outputRefs:
+    - elasticsearch-output

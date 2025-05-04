@@ -1,0 +1,13 @@
+kubectl create serviceaccount dashboard-viewer -n kube-system
+kubectl create clusterrolebinding dashboard-viewer-binding --clusterrole=cluster-admin --serviceaccount=kube-system:dashboard-viewer
+kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: dashboard-viewer-token
+  namespace: kube-system
+  annotations:
+    kubernetes.io/service-account.name: dashboard-viewer
+type: kubernetes.io/service-account-token
+EOF
+kubectl -n kube-system get secret dashboard-viewer-token -o jsonpath='{.data.token}' | base64 --decode

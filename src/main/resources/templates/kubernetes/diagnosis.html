@@ -1,0 +1,747 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Pod 故障诊断</title>
+    <meta name="author" content="TSM" />
+    <meta name="site" content="https://blog.52itstyle.com" />
+    <link rel="stylesheet" th:href="@{/iview/iview.css}">
+    <link rel="stylesheet" th:href="@{/bootstrap/css/bootstrap.min.css}"/>
+    <link rel="stylesheet" th:href="@{/font-awesome/css/font-awesome.min.css}"/>
+    <script th:src="@{/libs/jquery-3.2.1.min.js}" type="text/javascript"></script>
+    <script th:src="@{/libs/vue.min.js}" type="text/javascript"></script>
+    <script th:src="@{/layer/layer.js}" type="text/javascript"></script>
+    <script th:src="@{/iview/iview.min.js}" type="text/javascript"></script>
+    <script th:src="@{/common.js}" type="text/javascript"></script>
+    <style>
+        [v-cloak] {
+            display: none;
+        }
+        .diagnosis-section {
+            margin-bottom: 16px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background-color: #fff;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            height: 100%;
+        }
+        .diagnosis-section h4 {
+            margin-bottom: 15px;
+            color: #17233d;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+        }
+        .diagnosis-section h4 i {
+            margin-right: 8px;
+            font-size: 1.1em;
+        }
+        .suggestion {
+            padding: 12px;
+            margin: 8px 0;
+            background-color: #fff3cd;
+            border-left: 4px solid #ffc107;
+            border-radius: 2px;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        .error-suggestion {
+            background-color: #f8d7da;
+            border-left: 4px solid #dc3545;
+        }
+        .status-badge {
+            padding: 5px 12px;
+            border-radius: 12px;
+            font-size: 0.9em;
+            display: inline-block;
+            font-weight: 500;
+        }
+        .status-normal {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .status-warning {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+        .status-error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .ivu-form-item {
+            margin-bottom: 16px;
+        }
+        .diagnosis-card {
+            background: #fff;
+            border-radius: 4px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .diagnosis-result {
+            margin-top: 24px;
+        }
+        .diagnosis-result .ivu-row {
+            margin: 0 -8px;
+        }
+        .diagnosis-result .ivu-col {
+            padding: 0 8px;
+        }
+        .table-container {
+            background: #fff;
+            border-radius: 4px;
+            margin-top: 12px;
+        }
+        .table-container .ivu-table-wrapper {
+            border: none;
+        }
+        .info-item {
+            margin-bottom: 8px;
+            display: flex;
+            align-items: flex-start;
+        }
+        .info-item strong {
+            min-width: 120px;
+            color: #17233d;
+        }
+    </style>
+</head>
+<body>
+<div id="app" v-cloak>
+    <div style="padding: 24px">
+        <Card>
+            <p slot="title">
+                <Icon type="ios-medkit"></Icon>
+                Pod 故障诊断
+            </p>
+            <div>
+                <i-form :model="formData" :label-width="100">
+                    <row :gutter="16">
+                        <i-col span="8">
+                            <form-item label="环境">
+                                <i-select v-model="formData.env" @on-change="handleEnvChange" placeholder="选择环境">
+                                    <i-option v-for="env in envOptions" :value="env.value" :key="env.value">{{ env.label }}</i-option>
+                                </i-select>
+                            </form-item>
+                        </i-col>
+                        <i-col span="8">
+                            <form-item label="命名空间">
+                                <i-select v-model="formData.namespace" @on-change="handleNamespaceChange" placeholder="选择命名空间" filterable>
+                                    <i-option v-for="ns in namespaces" :value="ns.value" :key="ns.value">{{ ns.label }}</i-option>
+                                </i-select>
+                            </form-item>
+                        </i-col>
+                        <i-col span="8">
+                            <form-item label="Pod名称">
+                                <i-select v-model="formData.podName" placeholder="选择Pod" filterable>
+                                    <i-option v-for="pod in pods" :value="pod.name" :key="pod.name">{{ pod.name }}</i-option>
+                                </i-select>
+                            </form-item>
+                        </i-col>
+                    </row>
+                    <row>
+                        <i-col span="24" style="text-align: center">
+                            <i-button type="primary" icon="ios-search" @click="startDiagnosis">开始诊断</i-button>
+                        </i-col>
+                    </row>
+                </i-form>
+            </div>
+        </Card>
+
+        <!-- 诊断结果 -->
+        <div v-show="showResult" class="diagnosis-result">
+            <Row :gutter="16">
+                <!-- 左列 -->
+                <i-col span="12">
+                    <!-- Pod基本信息 -->
+                    <Card class="diagnosis-section">
+                        <p slot="title">
+                            <Icon type="ios-paper"></Icon>
+                            Pod基本信息
+                        </p>
+                        <div id="podBasicContent"></div>
+                    </Card>
+
+                    <!-- Pod状态 -->
+                    <Card class="diagnosis-section">
+                        <p slot="title">
+                            <Icon type="ios-information-circle"></Icon>
+                            Pod状态
+                        </p>
+                        <div id="podStatusContent"></div>
+                    </Card>
+
+                    <!-- 容器状态 -->
+                    <Card class="diagnosis-section">
+                        <p slot="title">
+                            <Icon type="ios-cube"></Icon>
+                            容器状态
+                        </p>
+                        <div id="containerStatusContent"></div>
+                    </Card>
+                </i-col>
+
+                <!-- 右列 -->
+                <i-col span="12">
+                    <!-- 资源使用情况 -->
+                    <Card class="diagnosis-section">
+                        <p slot="title">
+                            <Icon type="ios-stats"></Icon>
+                            资源使用情况
+                        </p>
+                        <div id="resourceUsageContent"></div>
+                    </Card>
+
+                    <!-- 资源状态 -->
+                    <Card class="diagnosis-section">
+                        <p slot="title">
+                            <Icon type="ios-speedometer"></Icon>
+                            资源状态
+                        </p>
+                        <div id="resourceStatusContent"></div>
+                    </Card>
+
+                    <!-- 网络状态 -->
+                    <Card class="diagnosis-section">
+                        <p slot="title">
+                            <Icon type="ios-globe"></Icon>
+                            网络状态
+                        </p>
+                        <div id="networkStatusContent"></div>
+                    </Card>
+                </i-col>
+            </Row>
+
+            <!-- 第二行 -->
+            <Row :gutter="16" style="margin-top: 16px">
+                <i-col span="12">
+                    <!-- 存储状态 -->
+                    <Card class="diagnosis-section">
+                        <p slot="title">
+                            <Icon type="ios-disc"></Icon>
+                            存储状态
+                        </p>
+                        <div id="volumeStatusContent"></div>
+                    </Card>
+                </i-col>
+                <i-col span="12">
+                    <!-- 节点状态 -->
+                    <Card class="diagnosis-section">
+                        <p slot="title">
+                            <Icon type="ios-server"></Icon>
+                            节点状态
+                        </p>
+                        <div id="nodeStatusContent"></div>
+                    </Card>
+                </i-col>
+            </Row>
+        </div>
+    </div>
+</div>
+
+<script>
+new Vue({
+    el: '#app',
+    data: {
+        environments: [],
+        namespaces: [],
+        pods: [],
+        formData: {
+            env: '',
+            namespace: '',
+            podName: ''
+        },
+        showResult: false,
+        envOptions: [],
+        resourceUsageData: null
+    },
+    mounted() {
+        this.loadEnvOptions();
+        
+        // 如果URL中有参数，自动填充并开始诊断
+        const urlParams = new URLSearchParams(window.location.search);
+        const env = urlParams.get('env');
+        const namespace = urlParams.get('namespace');
+        const podName = urlParams.get('podName');
+        
+        if (env && namespace && podName) {
+            this.formData.env = env;
+            this.handleEnvChange(env).then(() => {
+                this.formData.namespace = namespace;
+                return this.handleNamespaceChange(namespace);
+            }).then(() => {
+                this.formData.podName = podName;
+                this.startDiagnosis();
+            });
+        }
+    },
+    methods: {
+        loadEnvOptions: function() {
+            $.ajax({
+                url: "/system/env/visible",
+                type: "GET",
+                success: (result) => {
+                    if (result.success) {
+                        this.envOptions = result.data.map(env => {
+                            return {
+                                value: env.name,
+                                label: env.name
+                            };
+                        });
+                        console.log("Environment options loaded successfully:", this.envOptions);
+                    } else {
+                        this.$Message.error('Failed to load environment options: ' + result.msg);
+                    }
+                },
+                error: (xhr) => {
+                    this.$Message.error('Failed to request environment options: ' + xhr.statusText);
+                }
+            });
+        },
+        handleEnvChange(env) {
+            return new Promise((resolve) => {
+                if (!env) return resolve();
+                
+                $.ajax({
+                    url: "../kubernetes/namespaces",
+                    type: "post",
+                    data: {'env': env},
+                    success: (result) => {
+                        this.namespaces = result.msg.pageData.map(item => ({
+                            value: item.name,
+                            label: item.name
+                        }));
+                        this.pods = [];
+                        this.formData.namespace = '';
+                        this.formData.podName = '';
+                        resolve();
+                    },
+                    error: () => {
+                        this.$Message.error('Failed to load namespace list');
+                        resolve();
+                    }
+                });
+            });
+        },
+        handleNamespaceChange(namespace) {
+            return new Promise((resolve) => {
+                if (!namespace || !this.formData.env) return resolve();
+                
+                $.ajax({
+                    url:"../kubernetes/pods",
+                    type:"post",
+                    data:{
+                        'env':this.formData.env,
+                        'namespace':namespace,
+                        'status':'',
+                        'name':''
+                    },
+                    success: (result) => {
+                        if (result.msg && result.msg.pageData) {
+                            this.pods = result.msg.pageData;
+                            this.formData.podName = '';
+                            resolve();
+                        } else {
+                            this.$Message.error('Pod数据格式不正确');
+                            resolve();
+                        }
+                    },
+                    error: () => {
+                        this.$Message.error('获取Pod列表失败');
+                        resolve();
+                    }
+                });
+            });
+        },
+        startDiagnosis() {
+            if (!this.formData.env || !this.formData.namespace || !this.formData.podName) {
+                this.$Message.warning('请选择环境、命名空间和Pod');
+                return;
+            }
+
+            $.get(`/api/k8s/diagnosis/pod?env=${this.formData.env}&namespace=${this.formData.namespace}&podName=${this.formData.podName}`, (data) => {
+                if (data.status === 'success') {
+                    this.showResult = true;
+                    // 保存资源使用情况数据，供其他方法使用
+                    this.resourceUsageData = data.resourceUsage;
+                    
+                    this.$nextTick(() => {
+                        // 更新Pod基本信息
+                        this.updatePodBasicInfo(data.podBasicInfo);
+                        
+                        // 更新资源使用情况
+                        this.updateResourceUsage(data.resourceUsage);
+                        
+                        // 更新Pod状态
+                        this.updatePodStatus(data.podStatus);
+                        
+                        // 更新资源状态
+                        this.updateResourceStatus(data.resourceStatus);
+                        
+                        // 更新容器状态
+                        this.updateContainerStatus(data.containerStatus);
+                        
+                        // 更新网络状态
+                        this.updateNetworkStatus(data.networkStatus);
+                        
+                        // 更新存储状态
+                        this.updateVolumeStatus(data.volumeStatus);
+                        
+                        // 更新节点状态
+                        this.updateNodeStatus(data.nodeStatus);
+                    });
+                } else {
+                    this.$Message.error('诊断失败: ' + data.message);
+                }
+            });
+        },
+        updatePodStatus(status) {
+            let html = `<div class="status-badge ${this.getStatusClass(status.phase)}">${status.phase}</div>`;
+            
+            if (status.conditions && status.conditions.length > 0) {
+                html += '<div class="mt-3"><strong>状态条件：</strong></div>';
+                html += '<ul class="list-unstyled">';
+                status.conditions.forEach(condition => {
+                    const statusClass = condition.status === 'True' ? 'status-normal' : 'status-error';
+                    html += `<li class="mb-2">
+                        <strong>${condition.type}:</strong> <span class="status-badge ${statusClass}">${condition.status}</span>
+                        ${condition.reason ? `<br><em>原因：${condition.reason}</em>` : ''}
+                        ${condition.message ? `<br><small>${condition.message}</small>` : ''}
+                    </li>`;
+                });
+                html += '</ul>';
+            }
+
+            if (status.suggestions && status.suggestions.length > 0) {
+                html += '<div class="mt-3"><strong>诊断建议：</strong></div>';
+                status.suggestions.forEach(suggestion => {
+                    html += `<div class="suggestion">${suggestion}</div>`;
+                });
+            }
+
+            $('#podStatusContent').html(html);
+        },
+        updateResourceStatus(status) {
+            let html = '';
+            
+            // 获取容器资源配置情况
+            if (status.containerResources && status.containerResources.length > 0) {
+                html += '<div><strong>容器资源配置：</strong></div>';
+                html += '<div class="table-responsive mt-2 mb-3">';
+                html += '<table class="table table-bordered table-striped">';
+                html += '<thead><tr><th>容器名称</th><th>CPU 当前</th><th>CPU 请求</th><th>CPU 限制</th><th>内存 当前</th><th>内存请求</th><th>内存限制</th><th>状态</th></tr></thead>';
+                html += '<tbody>';
+                
+                // 获取资源使用情况数据 
+                const containerUsages = {};
+                if (this.resourceUsageData && this.resourceUsageData.containers) {
+                    this.resourceUsageData.containers.forEach(container => {
+                        containerUsages[container.name] = {
+                            cpuUsage: container.cpu ? container.cpu.current : 'N/A',
+                            memoryUsage: container.memory ? container.memory.current : 'N/A'
+                        };
+                    });
+                }
+                
+                status.containerResources.forEach(container => {
+                    const hasNoLimits = (!container.cpuLimit && !container.memoryLimit);
+                    const hasNoRequests = (!container.cpuRequest && !container.memoryRequest);
+                    const rowClass = (hasNoLimits || hasNoRequests) ? 'table-warning' : '';
+                    
+                    // 获取容器的实际使用量
+                    const usage = containerUsages[container.name] || { cpuUsage: 'N/A', memoryUsage: 'N/A' };
+                    
+                    html += `<tr class="${rowClass}">
+                        <td>${container.name}</td>
+                        <td>${usage.cpuUsage}</td>
+                        <td>${container.cpuRequest || '-'}</td>
+                        <td>${container.cpuLimit || '-'}</td>
+                        <td>${usage.memoryUsage}</td>
+                        <td>${container.memoryRequest || '-'}</td>
+                        <td>${container.memoryLimit || '-'}</td>
+                        <td>${(hasNoLimits || hasNoRequests) ? 
+                            '<span class="status-badge status-warning">配置不完整</span>' : 
+                            '<span class="status-badge status-normal">正常</span>'}</td>
+                    </tr>`;
+                });
+                
+                html += '</tbody></table></div>';
+            }
+            
+            if (status.suggestions && status.suggestions.length > 0) {
+                // 按类型对建议进行分组和合并
+                const resourceTypes = {
+                    '资源限制': [],
+                    '资源请求': [],
+                    '其他': []
+                };
+                
+                // 容器名称集合，用于后续的分组显示
+                const containerNames = new Set();
+                
+                // 分析每条建议并进行分类
+                status.suggestions.forEach(suggestion => {
+                    // 提取容器名称
+                    const containerMatch = suggestion.match(/容器\s([^\s]+)\s/);
+                    if (containerMatch) {
+                        containerNames.add(containerMatch[1]);
+                    }
+                    
+                    if (suggestion.includes('未设置资源限制')) {
+                        resourceTypes['资源限制'].push(suggestion);
+                    } else if (suggestion.includes('未设置资源请求')) {
+                        resourceTypes['资源请求'].push(suggestion);
+                    } else {
+                        resourceTypes['其他'].push(suggestion);
+                    }
+                });
+                
+                // 按类型合并和显示建议
+                html += '<div><strong>资源配置建议：</strong></div>';
+                
+                // 资源限制建议合并
+                if (resourceTypes['资源限制'].length > 0) {
+                    if (resourceTypes['资源限制'].length > 1) {
+                        // 多个容器都有相同问题，合并显示
+                        const containerList = Array.from(containerNames).join('、');
+                        html += `<div class="suggestion">以下容器未设置资源限制，建议设置以防止资源过度使用：${containerList}</div>`;
+                    } else {
+                        // 只有一个容器有问题，直接显示原始建议
+                        html += `<div class="suggestion">${resourceTypes['资源限制'][0]}</div>`;
+                    }
+                }
+                
+                // 资源请求建议合并
+                if (resourceTypes['资源请求'].length > 0) {
+                    if (resourceTypes['资源请求'].length > 1) {
+                        // 多个容器都有相同问题，合并显示
+                        const containerList = Array.from(containerNames).join('、');
+                        html += `<div class="suggestion">以下容器未设置资源请求，可能影响调度决策：${containerList}</div>`;
+                    } else {
+                        // 只有一个容器有问题，直接显示原始建议
+                        html += `<div class="suggestion">${resourceTypes['资源请求'][0]}</div>`;
+                    }
+                }
+                
+                // 其他建议
+                resourceTypes['其他'].forEach(suggestion => {
+                    html += `<div class="suggestion">${suggestion}</div>`;
+                });
+            }
+            $('#resourceStatusContent').html(html);
+        },
+        updateContainerStatus(status) {
+            let html = '';
+            if (status.containerStatuses && status.containerStatuses.length > 0) {
+                html += '<div class="table-container"><i-table :columns="containerColumns" :data="containerData"></i-table></div>';
+                html += '<div class="table-responsive"><table class="table">';
+                html += '<thead><tr><th>容器名称</th><th>状态</th><th>重启次数</th></tr></thead><tbody>';
+                status.containerStatuses.forEach(container => {
+                    html += `<tr>
+                        <td>${container.name}</td>
+                        <td><span class="status-badge ${this.getStatusClass(container.state)}">${container.state || '运行中'}</span></td>
+                        <td>${container.restartCount}</td>
+                    </tr>`;
+                });
+                html += '</tbody></table></div>';
+            }
+
+            if (status.suggestions && status.suggestions.length > 0) {
+                html += '<div class="mt-3"><strong>容器诊断建议：</strong></div>';
+                status.suggestions.forEach(suggestion => {
+                    html += `<div class="suggestion">${suggestion}</div>`;
+                });
+            }
+
+            $('#containerStatusContent').html(html);
+        },
+        updateNetworkStatus(status) {
+            let html = '';
+            if (status.podIP) {
+                html += `<div class="info-item"><strong>Pod IP:</strong> ${status.podIP}</div>`;
+            }
+
+            if (status.suggestions && status.suggestions.length > 0) {
+                html += '<div class="mt-3"><strong>网络诊断建议：</strong></div>';
+                status.suggestions.forEach(suggestion => {
+                    html += `<div class="suggestion">${suggestion}</div>`;
+                });
+            }
+
+            $('#networkStatusContent').html(html);
+        },
+        updateVolumeStatus(status) {
+            let html = '';
+            if (status.suggestions && status.suggestions.length > 0) {
+                html += '<div><strong>存储诊断建议：</strong></div>';
+                status.suggestions.forEach(suggestion => {
+                    html += `<div class="suggestion">${suggestion}</div>`;
+                });
+            }
+            $('#volumeStatusContent').html(html);
+        },
+        updateNodeStatus(status) {
+            let html = '';
+            if (status.nodeName) {
+                html += `<div class="info-item"><strong>节点名称:</strong> ${status.nodeName}</div>`;
+            }
+
+            if (status.suggestions && status.suggestions.length > 0) {
+                html += '<div class="mt-3"><strong>节点诊断建议：</strong></div>';
+                status.suggestions.forEach(suggestion => {
+                    html += `<div class="suggestion">${suggestion}</div>`;
+                });
+            }
+
+            $('#nodeStatusContent').html(html);
+        },
+        getStatusClass(status) {
+            if (!status) return 'status-normal';
+            status = status.toLowerCase();
+            if (status === 'running' || status === 'succeeded') return 'status-normal';
+            if (status === 'pending' || status === 'waiting') return 'status-warning';
+            if (status === 'failed' || status === 'error') return 'status-error';
+            return 'status-normal';
+        },
+        updatePodBasicInfo(info) {
+            let html = '<div class="pod-basic-info">';
+            
+            // 基本信息表格
+            html += '<table class="table table-bordered">';
+            html += '<tbody>';
+            
+            // 创建时间和运行时长
+            if (info.creationTimestamp) {
+                const creationTime = new Date(info.creationTimestamp);
+                const uptime = this.calculateUptime(creationTime);
+                html += `
+                    <tr>
+                        <th width="30%">创建时间</th>
+                        <td>${creationTime.toLocaleString()}</td>
+                    </tr>
+                    <tr>
+                        <th>运行时长</th>
+                        <td>${uptime}</td>
+                    </tr>`;
+            }
+
+            // QoS等级
+            if (info.qosClass) {
+                html += `
+                    <tr>
+                        <th>QoS等级</th>
+                        <td><span class="status-badge ${this.getQoSClass(info.qosClass)}">${info.qosClass}</span></td>
+                    </tr>`;
+            }
+
+            // 标签信息
+            if (info.labels && Object.keys(info.labels).length > 0) {
+                html += `
+                    <tr>
+                        <th>标签</th>
+                        <td>
+                            ${Object.entries(info.labels).map(([key, value]) => 
+                                `<Tag color="blue">${key}: ${value}</Tag>`
+                            ).join(' ')}
+                        </td>
+                    </tr>`;
+            }
+
+            html += '</tbody></table>';
+
+            // 如果有注解信息，添加可折叠的注解区域
+            if (info.annotations && Object.keys(info.annotations).length > 0) {
+                html += `
+                    <Collapse>
+                        <Panel name="annotations">
+                            注解信息
+                            <div slot="content">
+                                <table class="table table-bordered">
+                                    ${Object.entries(info.annotations).map(([key, value]) => 
+                                        `<tr><th>${key}</th><td>${value}</td></tr>`
+                                    ).join('')}
+                                </table>
+                            </div>
+                        </Panel>
+                    </Collapse>`;
+            }
+
+            html += '</div>';
+            $('#podBasicContent').html(html);
+        },
+        updateResourceUsage(usage) {
+            let html = '<div class="resource-usage">';
+            
+            // CPU使用情况
+            if (usage.cpu) {
+                html += `
+                    <div class="resource-section">
+                        <h4>CPU</h4>
+                        <Progress :percent="${usage.cpu.usagePercentage}" status="active">
+                            <span>${usage.cpu.current}/${usage.cpu.limit}</span>
+                        </Progress>
+                        <div class="resource-details">
+                            <span>请求: ${usage.cpu.request}</span>
+                            <span>限制: ${usage.cpu.limit}</span>
+                        </div>
+                    </div>`;
+            }
+
+            // 内存使用情况
+            if (usage.memory) {
+                html += `
+                    <div class="resource-section">
+                        <h4>内存</h4>
+                        <Progress :percent="${usage.memory.usagePercentage}" status="active">
+                            <span>${this.formatMemory(usage.memory.current)}/${this.formatMemory(usage.memory.limit)}</span>
+                        </Progress>
+                        <div class="resource-details">
+                            <span>请求: ${this.formatMemory(usage.memory.request)}</span>
+                            <span>限制: ${this.formatMemory(usage.memory.limit)}</span>
+                        </div>
+                    </div>`;
+            }
+
+            html += '</div>';
+            $('#resourceUsageContent').html(html);
+        },
+        calculateUptime(startTime) {
+            const now = new Date();
+            const diff = Math.floor((now - startTime) / 1000); // 秒
+            
+            const days = Math.floor(diff / 86400);
+            const hours = Math.floor((diff % 86400) / 3600);
+            const minutes = Math.floor((diff % 3600) / 60);
+            const seconds = diff % 60;
+            
+            let uptime = '';
+            if (days > 0) uptime += days + '天 ';
+            if (hours > 0 || days > 0) uptime += hours + '小时 ';
+            if (minutes > 0 || hours > 0 || days > 0) uptime += minutes + '分 ';
+            uptime += seconds + '秒';
+            
+            return uptime;
+        },
+        getQoSClass(qosClass) {
+            if (!qosClass) return '';
+            switch(qosClass) {
+                case 'Guaranteed': return 'status-normal';
+                case 'Burstable': return 'status-warning';
+                case 'BestEffort': return 'status-error';
+                default: return '';
+            }
+        },
+        formatMemory(memStr) {
+            if (!memStr || memStr === 'N/A') return memStr;
+            
+            // 简单处理，实际可能需要更复杂的单位转换
+            return memStr;
+        }
+    }
+});
+</script>
+</body>
+</html> 

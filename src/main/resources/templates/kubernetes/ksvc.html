@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Knative Services</title>
+    <meta name="author" content="TSM" />
+    <link rel="stylesheet" th:href="@{/iview/iview.css}">
+    <script th:src="@{/libs/jquery-3.2.1.min.js}"></script>
+    <script th:src="@{/libs/vue.min.js}"></script>
+    <script th:src="@{/layer/layer.js}"></script>
+    <script th:src="@{/iview/iview.min.js}"></script>
+    <script th:src="@{/common.js}"></script>
+    <style>
+        [v-cloak] { display: none; }
+        .status-ready { color: #19be6b; }
+        .status-not-ready { color: #ed4014; }
+        .status-unknown { color: #ff9900; }
+        .ivu-table-row-error {
+            background-color: #ffebeb;
+            color: #ed4014;
+        }
+        .ivu-table-row-error td {
+            background-color: #ffebeb !important;
+        }
+        .ivu-table-row-error:hover td {
+            background-color: #ffdbdb !important;
+        }
+    </style>
+</head>
+<body>
+<div id="app" v-cloak>
+    <div style="margin: 30px">
+        <i-select v-model="envSearch" 
+                 @on-change="fetchNamespace()" 
+                 placeholder="Environment" 
+                 style="width: 200px">
+            <i-option v-for="item in envOptions" 
+                     :value="item.value" 
+                     :key="item.value">{{ item.label }}</i-option>
+        </i-select>
+
+        <i-select v-model="namespaceSearch" 
+                 @on-change="search()" 
+                 placeholder="Namespace" 
+                 filterable
+                 style="width: 200px">
+            <i-option v-for="item in namespaceOptions" 
+                     :value="item.value" 
+                     :key="item.value">{{ item.label }}</i-option>
+        </i-select>
+
+        <i-select v-model="statusSearch" 
+                 @on-change="search()" 
+                 placeholder="Status" 
+                 style="width: 200px">
+            <i-option value="">All</i-option>
+            <i-option value="True">True</i-option>
+            <i-option value="False">False</i-option>
+            <i-option value="Unknown">Unknown</i-option>
+        </i-select>
+
+        <i-input v-model="serviceNameSearch" 
+                @on-enter="search()" 
+                placeholder="Service Name" 
+                style="width: 200px"></i-input>
+
+        <i-button type="primary" @click="search()" icon="ios-search">Search</i-button>
+        <i-button type="primary" @click="empty()" icon="ios-close-empty">Clear</i-button>
+    </div>
+
+    <div style="margin: 30px">
+        <i-table border 
+               :columns="columns" 
+               :data="serviceData"
+               :loading="loading"
+               :row-class-name="rowClassName">
+        </i-table>
+    </div>
+</div>
+
+<script>
+function copyYamlContent(elementId) {
+    const yamlContent = document.getElementById(elementId).textContent;
+    navigator.clipboard.writeText(yamlContent).then(() => {
+        vm.$Message.success('YAML content copied to clipboard');
+    }).catch(err => {
+        vm.$Message.error('Failed to copy YAML content: ' + err);
+    });
+}
+
+var vm = new Vue({
+    el: '#app',
+    data: {
+        envSearch: '',
+        namespaceSearch: '',
+        statusSearch: '',
+        serviceNameSearch: '',
+        envOptions: [],
+        namespaceOptions: [],
+        serviceData: [],
+        loading: false,
+        columns: [
+            { 
+                title: 'No.', 
+                type: 'index', 
+                width: 70, 
+                align: 'center' 
+            },
+            { 
+                title: 'Environment', 
+                key: 'env', 
+                width: 120 
+            },
+            { 
+                title: 'Namespace', 
+                key: 'namespace',
+                width: 150 
+            },
+            { 
+                title: 'Name', 
+                key: 'name', 
+                width: 200,
+                sortable: true 
+            },
+            {
+                title: 'URL',
+                key: 'url',
+                width: 300,
+                render: (h, params) => {
+                    if (!params.row.url) return h('span', '-');
+                    return h('a', {
+                        attrs: {
+                            href: 'https://' + params.row.url,
+                            target: '_blank'
+                        }
+                    }, params.row.url);
+                }
+            },
+            {
+                title: 'Status',
+                key: 'status',
+                width: 100,
+                render: (h, params) => {
+                    const status = params.row.status;
+                    let className = '';
+                    if (status === 'True') className = 'status-ready';
+                    else if (status === 'False') className = 'status-not-ready';
+                    else className = 'status-unknown';
+                    
+                    return h('span', {
+                        class: className
+                    }, status);
+                }
+            },
+            {
+                title: 'Generation',
+                key: 'generation',
+                width: 150,
+                sortable: true
+            },
+            {
+                title: 'Age',
+                key: 'age',
+                width: 100,
+                render: (h, params) => {
+                    const creationTimestamp = params.row.creationTimestamp;
+                    return h('span', vm.calculateAge(creationTimestamp));
+                }
+            },
+            {
+                title: 'Reason',
+                key: 'reason',
+                width: 400
+            },
+            {
+                title: 'Actions',
+                key: 'action',
+                width: 400,
+                render: (h, params) => {
+                    return h('div', [
+                        h('Button', {
+                            props: {
+                                type: 'primary',
+                                size: 'small',
+                                icon: 'ios-document'
+                            },
+                            style: {
+                                marginRight: '5px'
+                            },
+                            on: {
+                                click: () => {
+                                    vm.viewYaml(params.row);
+                                }
+                            }
+                        }, 'YAML'),
+                        h('Button', {
+                            props: {
+                                type: 'warning',
+                                size: 'small',
+                                icon: 'ios-refresh'
+                            },
+                            style: {
+                                marginRight: '5px'
+                            },
+                            on: {
+                                click: () => {
+                                    vm.updateService(params.row);
+                                }
+                            }
+                        }, 'Update'),
+                        h('Button', {
+                            props: {
+                                type: 'error',
+                                size: 'small',
+                                icon: 'ios-trash'
+                            },
+                            on: {
+                                click: () => {
+                                    vm.deleteService(params.row);
+                                }
+                            }
+                        }, 'Delete')
+                    ]);
+                }
+            }
+        ]
+    },
+    mounted: function() {
+        this.loadEnvOptions();
+    },
+    methods: {
+        loadEnvOptions: function() {
+            $.ajax({
+                url: "/system/env/visible",
+                type: "GET",
+                success: (result) => {
+                    if (result.success) {
+                        this.envOptions = result.data.map(env => {
+                            return {
+                                value: env.name,
+                                label: env.name
+                            };
+                        });
+                        console.log("Environment options loaded successfully:", this.envOptions);
+                        
+                        // Only fetch namespaces if we have a selected environment
+                        if (this.envSearch) {
+                            this.fetchNamespace();
+                        }
+                    } else {
+                        this.$Notice.error({ desc: 'Failed to load environment options: ' + result.msg });
+                    }
+                },
+                error: (xhr) => {
+                    this.$Notice.error({ desc: 'Failed to request environment options: ' + xhr.statusText });
+                }
+            });
+        },
+        fetchNamespace: function (showNotice = false) {
+            if (!this.envSearch) {
+                this.namespaceOptions = [];
+                return;
+            }
+            
+            $.ajax({
+                url: "../kubernetes/namespaces",
+                type: "post",
+                data: {'env': this.envSearch},
+                success: function(result) {
+                    vm.namespaceOptions = result.msg.pageData.map(function(item) {
+                        return {
+                            value: item.name,
+                            label: item.name
+                        };
+                    });
+                    if (showNotice) {
+                        vm.$Notice.success({
+                            desc: 'Namespace list loaded successfully'
+                        });
+                    }
+                },
+                error: function() {
+                    if (showNotice) {
+                        vm.$Notice.error({
+                            desc: 'Failed to load namespace list, please try again later'
+                        });
+                    }
+                }
+            });
+        },
+        search(showNotice = true) {
+            if (!this.envSearch) {
+                this.$Message.error('Please select environment first');
+                return;
+            }
+            this.loading = true;
+            $.ajax({
+                url: '../api/knative/service/list',
+                type: 'post',
+                data: {
+                    env: this.envSearch,
+                    namespace: this.namespaceSearch,
+                    name: this.serviceNameSearch,
+                    status: this.statusSearch
+                },
+                success: (result) => {
+                    this.loading = false;
+                    if (result.code === 0) {
+                        // Add environment field to each service
+                        this.serviceData = result.msg.pageData.map(item => ({
+                            ...item,
+                            env: this.envSearch
+                        }));
+                        if (showNotice) {
+                            this.$Notice.success({
+                                desc: 'Data loaded successfully'
+                            });
+                        }
+                    } else {
+                        this.$Message.error(result.msg);
+                    }
+                },
+                error: (xhr) => {
+                    this.loading = false;
+                    this.$Message.error('Search failed: ' + xhr.statusText);
+                }
+            });
+        },
+        empty() {
+            this.namespaceSearch = '';
+            this.statusSearch = '';
+            this.serviceNameSearch = '';
+            this.search(true);
+        },
+        viewYaml(service) {
+            $.ajax({
+                url: '../api/knative/service/yaml',
+                type: 'post',
+                data: {
+                    env: this.envSearch,
+                    namespace: service.namespace,
+                    name: service.name
+                },
+                success: function(result) {
+                    if (result.code === 0) {
+                        // 格式化 YAML 内容
+                        const formattedYaml = result.msg.split('\n').join('\n');
+                        
+                        // 创建一个唯一的 ID 用于复制功能
+                        const yamlContentId = 'yaml-content-' + Date.now();
+                        
+                        layer.open({
+                            type: 1,
+                            title: 'YAML - ' + service.name,
+                            area: ['800px', '600px'],
+                            content: `
+                                <div style="padding: 10px;">
+                                    <button class="ivu-btn ivu-btn-primary" onclick="copyYamlContent('${yamlContentId}')">
+                                        <i class="ivu-icon ivu-icon-ios-copy"></i> Copy YAML
+                                    </button>
+                                    <pre id="${yamlContentId}" style="margin-top: 10px; white-space: pre-wrap;">${formattedYaml}</pre>
+                                </div>
+                            `,
+                            success: function(layero, index) {
+                                // 添加 ESC 键关闭功能
+                                $(document).on('keyup.yaml', function(e) {
+                                    if (e.key === 'Escape') {
+                                        layer.close(index);
+                                    }
+                                });
+                            },
+                            end: function() {
+                                // 移除 ESC 键事件监听
+                                $(document).off('keyup.yaml');
+                            }
+                        });
+                    } else {
+                        vm.$Message.error(result.msg);
+                    }
+                },
+                error: function(xhr) {
+                    vm.$Message.error('Failed to fetch YAML: ' + xhr.statusText);
+                }
+            });
+        },
+        deleteService(service) {
+            this.$Modal.confirm({
+                title: 'Confirm Delete',
+                content: 'Are you sure you want to delete service ' + service.name + '?',
+                onOk: () => {
+                    $.ajax({
+                        url: '../api/knative/service/delete',
+                        type: 'POST',
+                        data: {
+                            env: this.envSearch,
+                            namespace: service.namespace,
+                            name: service.name
+                        },
+                        success: function(result) {
+                            if (result.code === 0) {
+                                vm.$Message.success('Service deleted successfully');
+                                vm.search();
+                            } else {
+                                vm.$Message.error(result.msg);
+                            }
+                        },
+                        error: function(xhr) {
+                            vm.$Message.error('Failed to delete service: ' + xhr.statusText);
+                        }
+                    });
+                }
+            });
+        },
+        updateService(service) {
+            this.$Modal.confirm({
+                title: 'Confirm Update',
+                content: '确定要为服务 ' + service.name + ' 创建新的revision吗？',
+                onOk: () => {
+                    this.loading = true;
+                    $.ajax({
+                        url: '../api/knative/service/update',
+                        type: 'POST',
+                        data: {
+                            env: this.envSearch,
+                            namespace: service.namespace,
+                            name: service.name
+                        },
+                        success: (result) => {
+                            this.loading = false;
+                            if (result.code === 0) {
+                                this.$Message.success('新的revision创建成功: ' + result.msg);
+                                this.search();  // 刷新列表
+                            } else {
+                                this.$Message.error(result.msg || '创建revision失败');
+                            }
+                        },
+                        error: (xhr) => {
+                            this.loading = false;
+                            this.$Message.error('创建revision失败: ' + xhr.statusText);
+                        }
+                    });
+                }
+            });
+        },
+        calculateAge(timestamp) {
+            if (!timestamp) return '-';
+            
+            const now = new Date();
+            const then = new Date(timestamp);
+            const diffInSeconds = Math.floor((now - then) / 1000);
+            
+            if (diffInSeconds < 60) return diffInSeconds + 's';
+            
+            const diffInMinutes = Math.floor(diffInSeconds / 60);
+            if (diffInMinutes < 60) return diffInMinutes + 'm';
+            
+            const diffInHours = Math.floor(diffInMinutes / 60);
+            if (diffInHours < 24) return diffInHours + 'h';
+            
+            const diffInDays = Math.floor(diffInHours / 24);
+            if (diffInDays < 30) return diffInDays + 'd';
+            
+            const diffInMonths = Math.floor(diffInDays / 30);
+            if (diffInMonths < 12) return diffInMonths + 'M';
+            
+            const diffInYears = Math.floor(diffInMonths / 12);
+            return diffInYears + 'y';
+        },
+        rowClassName(row) {
+            return row.status !== 'True' ? 'ivu-table-row-error' : '';
+        }
+    }
+});
+</script>
+</body>
+</html> 

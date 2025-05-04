@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ConfigMap Status</title>
+    <meta name="author" content="TSM" />
+    <link rel="stylesheet" th:href="@{/iview/iview.css}">
+    <script th:src="@{/libs/jquery-3.2.1.min.js}"></script>
+    <script th:src="@{/libs/vue.min.js}"></script>
+    <script th:src="@{/layer/layer.js}"></script>
+    <script th:src="@{/iview/iview.min.js}"></script>
+    <script th:src="@{/common.js}"></script>
+    <style>
+        [v-cloak] { display: none; }
+    </style>
+</head>
+<body>
+<div id="app" v-cloak>
+    <div style="margin: 30px">
+        <i-select v-model="envSearch" @on-change="fetchNamespace()" placeholder="Environment" style="width: 200px">
+            <i-option v-for="item in envOptions" :value="item.value" :key="item.value">{{ item.label }}</i-option>
+        </i-select>
+
+        <i-select v-model="namespaceSearch" 
+                 @on-change="search()" 
+                 placeholder="Namespace" 
+                 filterable
+                 style="width: 200px">
+            <i-option v-for="item in namespaceOptions" :value="item.value" :key="item.value">{{ item.label }}</i-option>
+        </i-select>
+
+        <i-input v-model="configMapNameSearch" @on-enter="search()" placeholder="ConfigMap Name" style="width: 200px"></i-input>
+        <i-button type="primary" @click="search()" icon="ios-search">Search</i-button>
+        <i-button type="primary" @click="empty()" icon="ios-close-empty">Clear</i-button>
+    </div>
+
+    <div style="margin: 30px">
+        <i-table border :columns="columns" :data="configMapData"></i-table>
+    </div>
+</div>
+
+<script>
+var vm = new Vue({
+    el: '#app',
+    data: {
+        envSearch: '',
+        namespaceSearch: '',
+        configMapNameSearch: '',
+        envOptions: [],
+        namespaceOptions: [],
+        configMapData: [],
+        columns: [
+            { title: 'No.', type: 'index', width: 70, align: 'center' },
+            { title: 'Environment', key: 'env', width: 120 },
+            { title: 'Name', key: 'name', sortable: true },
+            { title: 'Namespace', key: 'namespace' },
+            { title: 'Creation Time', key: 'creationTimestamp' },
+            { 
+                title: 'Actions',
+                render: (h, params) => {
+                    return h('div', [
+                        h('Button', {
+                            props: {
+                                type: 'primary',
+                                size: 'small',
+                                icon: 'ios-search'
+                            },
+                            style: {
+                                marginRight: '5px'
+                            },
+                            on: {
+                                click: () => {
+                                    vm.viewConfigMapDetails(params.row);
+                                }
+                            }
+                        }, 'View'),
+                        h('Button', {
+                            props: {
+                                type: 'warning',
+                                size: 'small',
+                                icon: 'ios-create'
+                            },
+                            on: {
+                                click: () => {
+                                    vm.editConfigMap(params.row);
+                                }
+                            }
+                        }, 'Edit')
+                    ]);
+                }
+            }
+        ]
+    },
+    mounted: function() {
+        this.loadEnvOptions();
+    },
+    methods: {
+        loadEnvOptions: function() {
+            $.ajax({
+                url: "/system/env/visible",
+                type: "GET",
+                success: (result) => {
+                    if (result.success) {
+                        this.envOptions = result.data.map(env => {
+                            return {
+                                value: env.name,
+                                label: env.name
+                            };
+                        });
+                        console.log("Environment options loaded successfully:", this.envOptions);
+                        
+                        // Only fetch namespaces if we have a selected environment
+                        if (this.envSearch) {
+                            this.fetchNamespace();
+                        }
+                    } else {
+                        this.$Notice.error({ desc: 'Failed to load environment options: ' + result.msg });
+                    }
+                },
+                error: (xhr) => {
+                    this.$Notice.error({ desc: 'Failed to request environment options: ' + xhr.statusText });
+                }
+            });
+        },
+        fetchNamespace(showNotice = false) {
+            $.ajax({
+                url: "../kubernetes/namespaces",
+                type: "post",
+                data: { env: this.envSearch },
+                success: (result) => {
+                    this.namespaceOptions = result.msg.pageData.map(item => ({
+                        value: item.name,
+                        label: item.name
+                    }));
+                    if (showNotice) {
+                        this.$Notice.success({ desc: 'Namespace loaded successfully' });
+                    }
+                },
+                error: () => {
+                    if (showNotice) {
+                        this.$Notice.error({ desc: 'Failed to load namespace' });
+                    }
+                }
+            });
+        },
+        search() {
+            if (!this.envSearch) {
+                this.$Notice.warning({ desc: 'Please select environment first' });
+                return;
+            }
+
+            $.ajax({
+                url: "../kubernetes/configmaps",
+                type: "post",
+                data: {
+                    env: this.envSearch,
+                    namespace: this.namespaceSearch,
+                    name: this.configMapNameSearch
+                },
+                success: (result) => {
+                    if (result.code === 0) {
+                        this.configMapData = result.msg.pageData.map(item => {
+                            return {
+                                ...item,
+                                env: this.envSearch
+                            };
+                        });
+                        this.$Notice.success({ desc: 'Data loaded successfully' });
+                    } else {
+                        this.$Notice.error({ desc: 'Request failed: ' + result.msg });
+                    }
+                },
+                error: (xhr) => {
+                    this.$Notice.error({ desc: 'Request failed: ' + xhr.statusText });
+                }
+            });
+        },
+        empty() {
+            this.namespaceSearch = '';
+            this.configMapNameSearch = '';
+            this.search();
+        },
+        viewConfigMapDetails(configMap) {
+            // 创建完整的YAML结构
+            let yamlContent = `apiVersion: v1\nkind: ConfigMap\nmetadata:\n`;
+            yamlContent += `  name: ${configMap.name}\n`;
+            yamlContent += `  namespace: ${configMap.namespace}\n`;
+            if (configMap.labels) {
+                yamlContent += `  labels:\n`;
+                for (let key in configMap.labels) {
+                    yamlContent += `    ${key}: ${configMap.labels[key]}\n`;
+                }
+            }
+            yamlContent += `data:\n`;
+            for (let key in configMap.data) {
+                // 处理多行内容，确保正确的缩进
+                const value = configMap.data[key];
+                const lines = value.split('\n');
+                if (lines.length > 1) {
+                    yamlContent += `  ${key}: |\n`;
+                    lines.forEach(line => {
+                        yamlContent += `    ${line}\n`;
+                    });
+                } else {
+                    yamlContent += `  ${key}: ${value}\n`;
+                }
+            }
+            
+            layer.open({
+                type: 1,
+                title: `ConfigMap: ${configMap.name}`,
+                area: ['800px', '600px'],
+                content: `<div style="padding: 20px;">
+                    <pre style="background-color: #f8f8f9; 
+                              padding: 15px; 
+                              border-radius: 4px; 
+                              white-space: pre-wrap; 
+                              word-wrap: break-word; 
+                              font-family: monospace; 
+                              font-size: 14px;">${this.escapeHtml(yamlContent)}</pre>
+                </div>`
+            });
+        },
+        editConfigMap(configMap) {
+            // 创建完整的YAML结构供编辑
+            let yamlContent = `apiVersion: v1\nkind: ConfigMap\nmetadata:\n`;
+            yamlContent += `  name: ${configMap.name}\n`;
+            yamlContent += `  namespace: ${configMap.namespace}\n`;
+            if (configMap.labels) {
+                yamlContent += `  labels:\n`;
+                for (let key in configMap.labels) {
+                    yamlContent += `    ${key}: ${configMap.labels[key]}\n`;
+                }
+            }
+            yamlContent += `data:\n`;
+            for (let key in configMap.data) {
+                // 处理多行内容，确保正确的缩进
+                const value = configMap.data[key];
+                const lines = value.split('\n');
+                if (lines.length > 1) {
+                    yamlContent += `  ${key}: |\n`;
+                    lines.forEach(line => {
+                        yamlContent += `    ${line}\n`;
+                    });
+                } else {
+                    yamlContent += `  ${key}: ${value}\n`;
+                }
+            }
+
+            let textareaId = 'configmap-editor';
+            let content = `
+                <div style="padding: 20px;">
+                    <div style="margin-bottom: 10px; color: #666;">
+                        <p>编辑说明：</p>
+                        <ul style="padding-left: 20px; margin: 5px 0;">
+                            <li>请保持YAML格式的正确性</li>
+                            <li>保持正确的缩进（使用空格）</li>
+                            <li>修改 data 部分的内容</li>
+                        </ul>
+                    </div>
+                    <textarea id="${textareaId}" 
+                            style="width: 100%; 
+                                   height: 500px; 
+                                   font-family: monospace; 
+                                   font-size: 14px; 
+                                   padding: 10px;
+                                   white-space: pre;
+                                   overflow: auto;
+                                   resize: vertical;">${this.escapeHtml(yamlContent)}</textarea>
+                </div>`;
+
+            layer.open({
+                type: 1,
+                title: `Edit ConfigMap: ${configMap.name}`,
+                area: ['800px', '700px'],
+                content: content,
+                btn: ['Save', 'Cancel'],
+                yes: (index) => {
+                    try {
+                        const text = document.getElementById(textareaId).value;
+                        
+                        // 使用简单的YAML解析来提取data部分
+                        const lines = text.split('\n');
+                        const newData = {};
+                        let inData = false;
+                        let currentKey = null;
+                        let currentValue = [];
+                        
+                        for (let line of lines) {
+                            if (line.trim() === 'data:') {
+                                inData = true;
+                                continue;
+                            }
+                            
+                            if (inData) {
+                                if (line.trim() === '' || line.trim().startsWith('#')) {
+                                    continue;
+                                }
+                                
+                                // 检查是否是新的顶级键（缩进级别为2个空格）
+                                if (line.startsWith('  ') && !line.startsWith('    ')) {
+                                    // 保存之前的键值对
+                                    if (currentKey) {
+                                        newData[currentKey] = currentValue.join('\n');
+                                        currentValue = [];
+                                    }
+                                    
+                                    const parts = line.trim().split(':');
+                                    if (parts.length >= 2) {
+                                        currentKey = parts[0].trim();
+                                        const value = parts.slice(1).join(':').trim();
+                                        if (value && value !== '|') {
+                                            newData[currentKey] = value;
+                                            currentKey = null;
+                                        }
+                                    }
+                                } else if (line.startsWith('    ') && currentKey) {
+                                    // 这是多行值的一部分
+                                    currentValue.push(line.slice(4));
+                                } else if (!line.startsWith('  ')) {
+                                    // 已经离开data部分
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        // 保存最后一个键值对
+                        if (currentKey && currentValue.length > 0) {
+                            newData[currentKey] = currentValue.join('\n');
+                        }
+
+                        if (Object.keys(newData).length === 0) {
+                            throw new Error('No data found in the ConfigMap');
+                        }
+
+                        // 发送更新请求
+                        $.ajax({
+                            url: "../kubernetes/configmaps/update",
+                            type: "post",
+                            contentType: "application/json",
+                            data: JSON.stringify({
+                                env: configMap.env,
+                                namespace: configMap.namespace,
+                                name: configMap.name,
+                                data: newData
+                            }),
+                            success: (result) => {
+                                if (result.code === 0) {
+                                    this.$Notice.success({
+                                        desc: 'ConfigMap updated successfully'
+                                    });
+                                    layer.close(index);
+                                    this.search();
+                                } else {
+                                    this.$Notice.error({
+                                        desc: 'Failed to update ConfigMap: ' + result.msg
+                                    });
+                                }
+                            },
+                            error: (xhr) => {
+                                this.$Notice.error({
+                                    desc: 'Failed to update ConfigMap: ' + xhr.statusText
+                                });
+                            }
+                        });
+                    } catch (e) {
+                        this.$Notice.error({
+                            desc: 'Error parsing ConfigMap data: ' + e.message
+                        });
+                        return false;
+                    }
+                }
+            });
+        },
+        // HTML转义函数
+        escapeHtml(text) {
+            if (!text) return '';
+            return text
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+    }
+});
+</script>
+</body>
+</html> 

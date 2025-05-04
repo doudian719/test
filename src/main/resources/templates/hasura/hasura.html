@@ -1,0 +1,768 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Task Scheduler Manager</title>
+    <meta name="author" content="TSM" />
+    <meta name="site" content="https://blog.52itstyle.com" />
+    <link rel="stylesheet" th:href="@{/iview/iview.css}">
+    <script th:src="@{/libs/jquery-3.2.1.min.js}" type="text/javascript"></script>
+    <script th:src="@{/libs/vue.min.js}" type="text/javascript"></script>
+    <script th:src="@{/layer/layer.js}" type="text/javascript"></script>
+    <script th:src="@{/iview/iview.min.js}" type="text/javascript"></script>
+    <script th:src="@{/common.js}" type="text/javascript"></script>
+    <style type="text/css">
+        [v-cloak] {
+            display: none;
+        }
+        /* 移除旧的样式 */
+        .status-failure {
+            display: none;
+        }
+        /* 更新非运行状态的Pod行样式 */
+        .table-danger {
+            background-color: #ffd7d7 !important;  /* 更鲜明的红色背景 */
+        }
+        /* 鼠标悬停效果 */
+        .table-danger:hover {
+            background-color: #ffbdbd !important;  /* 更深的红色 */
+        }
+        /* 确保iView表格的hover效果不会覆盖我们的样式 */
+        .ivu-table-row.table-danger td {
+            background-color: #ffd7d7 !important;
+        }
+        .ivu-table-row.table-danger:hover td {
+            background-color: #ffbdbd !important;
+        }
+        .status-tag {
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+        .status-running {
+            background-color: #19be6b;
+            color: white;
+        }
+        .status-crashloop {
+            background-color: #ed4014;
+            color: white;
+        }
+        .status-pending {
+            background-color: #ff9900;
+            color: white;
+        }
+        .status-podinitializing {
+            background-color: #2d8cf0;
+            color: white;
+        }
+        .status-init {
+            background-color: #2d8cf0;
+            color: white;
+        }
+        .status-containercreating {
+            background-color: #2d8cf0;
+            color: white;
+        }
+        /* 初始化状态信息提示 */
+        .init-status {
+            font-size: 11px;
+            color: #ff9900;
+            margin-top: 4px;
+        }
+        /* Add more status styles as needed */
+
+        /* 更新可调整大小的样式 */
+        .ivu-modal-wrap .resizable-modal {
+            position: absolute !important;
+            resize: both !important;
+            overflow: hidden !important;
+            min-width: 600px !important;
+            min-height: 400px !important;
+            max-width: 95vw !important;
+            max-height: 95vh !important;
+            background: #fff !important;
+            border-radius: 4px !important;
+            box-shadow: 0 1px 6px rgba(0,0,0,.2) !important;
+            top: 50% !important;
+            left: 50% !important;
+            transform: translate(-50%, -50%) !important;
+        }
+
+        .ivu-modal-wrap .resizable-modal .ivu-modal-content {
+            height: 100% !important;
+            display: flex !important;
+            flex-direction: column !important;
+            background: #fff !important;
+            border-radius: 4px !important;
+        }
+
+        .ivu-modal-wrap .resizable-modal .ivu-modal-header {
+            padding: 14px 16px !important;
+            border-bottom: 1px solid #e8e8e8 !important;
+            border-radius: 4px 4px 0 0 !important;
+            background: #fff !important;
+            flex-shrink: 0 !important;
+        }
+
+        .ivu-modal-wrap .resizable-modal .ivu-modal-body {
+            flex: 1 !important;
+            overflow: hidden !important;
+            padding: 0 !important;
+            background: #fff !important;
+            height: calc(100% - 51px) !important;  /* 只减去header的高度 */
+        }
+
+        /* 移除footer相关样式 */
+        .ivu-modal-wrap .resizable-modal .ivu-modal-footer {
+            display: none !important;
+        }
+
+        .ivu-modal-wrap .resizable-modal .event-content-wrapper {
+            height: 100% !important;
+            overflow: auto !important;
+            padding: 16px !important;
+            background: #fff !important;
+        }
+
+        /* 更新事件列表样式 */
+        .ivu-modal-wrap .resizable-modal .event-content {
+            background: #fff !important;
+        }
+
+        .ivu-modal-wrap .resizable-modal .event-item {
+            margin-bottom: 10px !important;
+            padding: 12px !important;
+            border-bottom: 1px solid #e8e8e8 !important;
+            background: #fff !important;
+        }
+
+        .ivu-modal-wrap .resizable-modal .event-item:last-child {
+            border-bottom: none !important;
+        }
+
+        .ivu-modal-wrap .resizable-modal .event-item.warning-event {
+            background-color: #fffbe6 !important;
+        }
+
+        /* 更新调整大小的提示样式 */
+        .ivu-modal-wrap .resizable-modal .resize-handle {
+            position: absolute !important;
+            right: 0 !important;
+            bottom: 0 !important;
+            width: 20px !important;
+            height: 20px !important;
+            cursor: se-resize !important;
+            background: linear-gradient(135deg, transparent 50%, #2d8cf0 50%) !important;
+            opacity: 0.5;
+            transition: opacity 0.3s;
+            z-index: 1000 !important;
+        }
+
+        .ivu-modal-wrap .resizable-modal .resize-handle:hover {
+            opacity: 1;
+        }
+    </style>
+</head>
+<body>
+<div id="app" v-cloak>
+    <div style="margin-bottom: 6px;margin: 30px">
+        <i-select v-model="envSearch" placeHolder="Environment" style="width: 200px">
+            <i-option v-for="item in envOptions" :value="item.value" :key="item.value">
+                {{ item.label }}
+            </i-option>
+        </i-select>
+        <i-input v-model="keywordSearch" @on-enter="search()" placeHolder="Keyword" style="width: 200px"></i-input>
+        <i-button type="primary" @click="search()" icon="ios-search">Search</i-button>
+        <i-button type="primary" @click="empty()" icon="ios-close-empty">Clear</i-button>
+        <i-switch v-model="autoRefresh"
+                  size="large"
+                  @on-change="handleAutoRefreshChange"
+                  style="margin-left: 10px">
+            <span slot="open">Auto Refresh ON</span>
+            <span slot="close">Auto Refresh OFF</span>
+        </i-switch>
+    </div>
+    <div style="margin-bottom: 6px;margin: 30px">
+        <template>
+            <i-table border
+                     :content="self"
+                     :columns="tableTitle"
+                     :data="PageData"
+                     :row-class-name="rowClassName">
+            </i-table>
+        </template>
+    </div>
+</div>
+<script type="text/javascript">
+    var vm = new Vue({
+        el : '#app',
+        data : {
+            envSearch : '',
+            keywordSearch: '',
+            envOptions: [],
+            autoRefresh: false,
+            refreshTimer: null,
+            PageData : [],
+            tableTitle:[ {
+                title: 'No.',
+                type: 'index',
+                width: 70,
+                align: 'center'
+            }, {
+                title: 'Schema Name',
+                key: 'name',
+                width: 300,
+                sortable: true
+            }, {
+                title: 'URL',
+                key: 'url',
+                width: 500
+            }, {
+                title: 'Timeout (s)',
+                key: 'timeoutSeconds',
+                width: 200,
+                align: 'center'
+            }, {
+                title: 'Forward Headers',
+                key: 'forwardClientHeaders',
+                width: 220,
+                align: 'center',
+                render: function(h, params) {
+                    return h('span', params.row.forwardClientHeaders ? 'Yes' : 'No');
+                }
+            }, {
+                title: 'Comments',
+                key: 'comments',
+                width: 300
+            }, {
+                title: 'Status',
+                key: 'healthStatus',
+                width: 200,
+                render: function(h, params) {
+                    var healthStatus = params.row.healthStatus || {};
+                    var isHealthy = healthStatus.healthy;
+                    var tagClass = isHealthy ? 'status-tag status-healthy' : 'status-tag status-unhealthy';
+                    var text = isHealthy ? 'Healthy' : 'Unhealthy';
+                    return h('span', { class: tagClass }, text);
+                }
+            },{
+                title: 'Action',
+                key: 'action',
+                width: 250,
+                align: 'center',
+                render: function(h, params) {
+                    return h('div', [
+                        h('Button', {
+                            props: {
+                                type: 'primary',
+                                size: 'small',
+                                icon: 'md-refresh'
+                            },
+                            style: {
+                                marginRight: '8px'
+                            },
+                            on: {
+                                click: function() {
+                                    vm.refreshSchema(params.row);
+                                }
+                            }
+                        }, 'Refresh'),
+                        h('Button', {
+                            props: {
+                                type: 'error',
+                                size: 'small',
+                                icon: 'md-trash'
+                            },
+                            on: {
+                                click: function() {
+                                    vm.showDeleteModal(params.row);
+                                }
+                            }
+                        }, 'Delete')
+                    ]);
+                }
+            }]
+
+        },
+        mounted: function() {
+            this.loadEnvOptions();
+        },
+        methods : {
+            loadEnvOptions() {
+                // 动态加载环境下拉选项
+                $.ajax({
+                    url: '/api/hasura/env/options',
+                    type: 'GET',
+                    success: (result) => {
+                        if (result.code === 0 && result.data) {
+                            this.envOptions = result.data;
+                        } else {
+                            this.$Message.error(result.msg || 'Failed to load environment options');
+                        }
+                    },
+                    error: () => {
+                        this.$Message.error('Failed to load environment options');
+                    }
+                });
+            },
+            //搜索
+            search : function(showNotice = true) {
+                if(vm.envSearch === '') {
+                    if (showNotice) {
+                        vm.$Notice.warning({
+                            desc: 'Please select environment first'
+                        });
+                    }
+                    return;
+                }
+
+                $.ajax({
+                    url: '/api/hasura/schemas/search',
+                    type:"get",
+                    data:{'env':this.envSearch,'keyword':this.keywordSearch},
+                    success: function(result) {
+                        if (result.code === 0 && Array.isArray(result.msg)) {
+                            vm.PageData = result.msg.map(function(item) {
+                                return {
+                                    ...item,
+                                    env: vm.envSearch // 添加环境字段
+                                };
+                            });
+                            if (showNotice) {
+                                vm.$Notice.success({
+                                    desc: 'Data loaded successfully'
+                                });
+                            }
+                        } else {
+                            vm.PageData = [];
+                            if (showNotice) {
+                                vm.$Notice.error({
+                                    desc: result.msg || 'Failed to load data'
+                                });
+                            }
+                        }
+                    },
+                    error: function() {
+                        if (showNotice) {
+                            vm.$Notice.error({
+                                desc: 'Failed to load data, please try again later'
+                            });
+                        }
+                    }
+                });
+            },
+            empty : function(){
+                vm.keywordSearch = '';
+                vm.PageData = [];
+            },
+            //任务列表(自行实现分页)
+            list : function() {
+                $.ajax({
+                    url:"../kubernetes/pods",
+                    type:"post",
+                    data:{'env':this.envSearch,'namespace':this.namespaceSearch,'status':this.statusSearch,'name':this.keywordSearch},
+                    success: function(result) {
+                        // 为每条数据添加环境字段
+                        vm.PageData = result.msg.pageData.map(function(item) {
+                            return {
+                                ...item,
+                                env: vm.envSearch // 添加环境字段
+                            };
+                        });
+                        vm.tableSize = result.msg.totalCount;
+                    }
+                });
+            },
+            //删除单个记录
+            remove : function(id){
+                var that = this;
+                top.layer.confirm('确定要删除这个日志吗？', {
+                    btn: ['确定','取消'] //按钮
+                }, function(){
+                    $.ajax({
+                        url:"../joblog/clear",
+                        type:"post",
+                        data:{"id":id},
+                        success: function(result) {
+                            if(result.code=="0"){
+                                top.layer.msg('日志删除成功', {icon: 1});
+                                window.setTimeout(that.list(),1500);
+                            }
+                        }
+                    });
+                }, function(){
+
+                });
+            },
+            formatDate : function(timestamp) {
+                const date = new Date(timestamp);
+                const year = date.getFullYear();
+                const month = ('0' + (date.getMonth() + 1)).slice(-2);
+                const day = ('0' + date.getDate()).slice(-2);
+                const hour = ('0' + date.getHours()).slice(-2);
+                const minute = ('0' + date.getMinutes()).slice(-2);
+                const second = ('0' + date.getSeconds()).slice(-2);
+                return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
+            },
+            reload :  function(){
+                this.load();
+            },
+            rowClassName (row) {
+                // Only highlight unhealthy rows
+                if (row.healthStatus && row.healthStatus.healthy === false) {
+                    return 'table-danger';
+                }
+                return '';
+            },
+            // 添加新的查看日志方法
+            viewLogs: function(row) {
+                // 确保已选择环境
+                if (!this.envSearch) {
+                    this.$Notice.warning({
+                        desc: 'Please select environment first'
+                    });
+                    return;
+                }
+
+                $.ajax({
+                    url: "../kubernetes/logs",
+                    type: "post",
+                    data: {
+                        'env': this.envSearch,
+                        'namespace': row.namespace,
+                        'podName': row.name
+                    },
+                    success: function(result) {
+                        if (result.code === 0) {
+                            vm.$Notice.success({
+                                desc: '日志已在服务器控制台打印'
+                            });
+                        } else {
+                            vm.$Notice.error({
+                                desc: '获取日志失败: ' + result.msg
+                            });
+                        }
+                    },
+                    error: function(xhr, status, error) {
+                        vm.$Notice.error({
+                            desc: '获取日志失败: ' + error
+                        });
+                    }
+                });
+            },
+            // 添加下载日志方法
+            downloadLogs: function(row) {
+                // 确保已选择环境
+                if (!this.envSearch) {
+                    this.$Notice.warning({
+                        desc: 'Please select environment first'
+                    });
+                    return;
+                }
+
+                // URL 编码参数
+                const params = {
+                    env: encodeURIComponent(this.envSearch),
+                    namespace: encodeURIComponent(row.namespace),
+                    podName: encodeURIComponent(row.name)
+                };
+
+                // 检查Pod状态，如果是PodInitializing或其他初始化状态，添加特殊参数
+                if (row.status === 'PodInitializing' || row.status === 'Init' || row.status === 'ContainerCreating' || row.status === 'Pending') {
+                    params.initContainerLogs = 'true';
+                    this.$Notice.info({
+                        desc: '检测到Pod处于初始化状态，将尝试获取Init容器日志'
+                    });
+                }
+
+                // 构建下载URL
+                const downloadUrl = `../kubernetes/logs/download?env=${params.env}&namespace=${params.namespace}&podName=${params.podName}${params.initContainerLogs ? '&initContainerLogs=true' : ''}`;
+
+                const loadingMsg = this.$Message.loading({
+                    content: '正在准备下载...',
+                    duration: 0
+                });
+
+                // 使用原生XHR以支持进度监控
+                const xhr = new XMLHttpRequest();
+                xhr.open('GET', downloadUrl, true);
+                xhr.responseType = 'blob';
+
+                // 设置超时
+                xhr.timeout = 300000; // 5分钟超时
+
+                // 进度处理
+                xhr.onprogress = (event) => {
+                    if (event.lengthComputable) {
+                        const percentComplete = (event.loaded / event.total) * 100;
+                        loadingMsg.content = `下载进度: ${percentComplete.toFixed(2)}%`;
+                    } else {
+                        // 如果无法计算总大小，显示已下载的大小
+                        const mb = (event.loaded / (1024 * 1024)).toFixed(2);
+                        loadingMsg.content = `已下载: ${mb} MB`;
+                    }
+                };
+
+                xhr.onload = () => {
+                    loadingMsg();
+                    if (xhr.status === 200) {
+                        const blob = xhr.response;
+                        const url = window.URL.createObjectURL(blob);
+                        const link = document.createElement('a');
+                        link.href = url;
+                        link.download = `${this.envSearch}-${row.namespace}-${row.name}-logs.zip`;
+                        document.body.appendChild(link);
+                        link.click();
+                        window.URL.revokeObjectURL(url);
+                        document.body.removeChild(link);
+
+                        this.$Notice.success({
+                            desc: '日志下载成功'
+                        });
+                    } else {
+                        this.$Notice.error({
+                            desc: '下载失败: ' + xhr.statusText
+                        });
+                    }
+                };
+
+                xhr.onerror = () => {
+                    loadingMsg();
+                    this.$Notice.error({
+                        desc: '下载失败，请重试'
+                    });
+                };
+
+                xhr.ontimeout = () => {
+                    loadingMsg();
+                    this.$Notice.error({
+                        desc: '下载超时，请重试'
+                    });
+                };
+
+                xhr.send();
+            },
+            // 添加查看Init Container日志方法
+            viewInitContainerLogs: function(row) {
+                // 确保已选择环境
+                if (!this.envSearch) {
+                    this.$Notice.warning({
+                        desc: 'Please select environment first'
+                    });
+                    return;
+                }
+
+                $.ajax({
+                    url: "../kubernetes/logs/init",
+                    type: "post",
+                    data: {
+                        'env': this.envSearch,
+                        'namespace': row.namespace,
+                        'podName': row.name
+                    },
+                    success: function(result) {
+                        if (result.code === 0) {
+                            // 创建一个模态框显示日志
+                            const modal = vm.$Modal.info({
+                                title: 'Init Container Logs',
+                                width: 1000,        // 增加宽度
+                                height: 600,        // 设置高度
+                                styles: {
+                                    top: '50px',   // 距离顶部的距离
+                                    marginBottom: '50px'  // 底部边距
+                                },
+                                scrollable: true,
+                                closable: true,     // 允许关闭
+                                maskClosable: true, // 允许点击遮罩层关闭
+                                footer: null,       // 不显示底部按钮
+                                render: (h) => {
+                                    return h('div', {
+                                        style: {
+                                            'max-height': '500px',
+                                            'overflow-y': 'auto',
+                                            'padding': '16px',
+                                            'white-space': 'pre-wrap',
+                                            'font-family': 'monospace'
+                                        },
+                                        domProps: {
+                                            innerHTML: result.msg
+                                        }
+                                    });
+                                },
+                                onRemove: () => {
+                                    // 移除ESC事件监听器
+                                    document.removeEventListener('keydown', handleEsc);
+                                }
+                            });
+
+                            // 添加ESC键关闭功能
+                            const handleEsc = (e) => {
+                                if (e.keyCode === 27) { // ESC键的keyCode是27
+                                    vm.$Modal.remove();
+                                    document.removeEventListener('keydown', handleEsc);
+                                }
+                            };
+                            document.addEventListener('keydown', handleEsc);
+                        } else {
+                            vm.$Notice.error({
+                                desc: '获取Init Container日志失败: ' + result.msg
+                            });
+                        }
+                    },
+                    error: function(xhr, status, error) {
+                        vm.$Notice.error({
+                            desc: '获取Init Container日志失败: ' + error
+                        });
+                    }
+                });
+            },
+            // 添加删除Pod的方法
+            deletePod: function(row) {
+                // 确保已选择环境
+                if (!this.envSearch) {
+                    this.$Notice.warning({
+                        desc: 'Please select environment first'
+                    });
+                    return;
+                }
+
+                // 显示确认对话框
+                this.$Modal.confirm({
+                    title: 'Delete Pod',
+                    content: `Are you sure you want to delete pod "${row.name}" in namespace "${row.namespace}"?`,
+                    okText: 'Delete',
+                    cancelText: 'Cancel',
+                    onOk: () => {
+                        // 发送删除请求
+                        $.ajax({
+                            url: "../kubernetes/pods/delete",
+                            type: "post",
+                            data: {
+                                'env': this.envSearch,
+                                'namespace': row.namespace,
+                                'podName': row.name
+                            },
+                            success: (result) => {
+                                if (result.code === 0) {
+                                    this.$Notice.success({
+                                        desc: 'Pod deleted successfully'
+                                    });
+                                    // 重新加载数据
+                                    this.search(false);
+                                } else {
+                                    this.$Notice.error({
+                                        desc: 'Failed to delete pod: ' + result.msg
+                                    });
+                                }
+                            },
+                            error: (xhr, status, error) => {
+                                this.$Notice.error({
+                                    desc: 'Failed to delete pod: ' + error
+                                });
+                            }
+                        });
+                    }
+                });
+            },
+            diagnosePod: function(row) {
+                window.location.href = `/kubernetes/diagnosis?env=${row.env}&namespace=${row.namespace}&podName=${row.name}`;
+            },
+            // 处理自动刷新开关变化
+            handleAutoRefreshChange(status) {
+                if (status) {
+                    // 开启自动刷新
+                    this.refreshTimer = setInterval(() => {
+                        this.search(false);  // false表示不显示刷新成功的提示
+                    }, 5000);  // 每5秒刷新一次
+
+                    this.$Notice.info({
+                        desc: 'Auto refresh enabled (every 5 seconds)'
+                    });
+                } else {
+                    // 关闭自动刷新
+                    if (this.refreshTimer) {
+                        clearInterval(this.refreshTimer);
+                        this.refreshTimer = null;
+                    }
+
+                    this.$Notice.info({
+                        desc: 'Auto refresh disabled'
+                    });
+                }
+            },
+            // 在组件销毁前清理定时器
+            beforeDestroy() {
+                if (this.refreshTimer) {
+                    clearInterval(this.refreshTimer);
+                    this.refreshTimer = null;
+                }
+            },
+            showDeleteModal: function(row) {
+                var that = this;
+                this.$Modal.confirm({
+                    title: 'Delete Schema',
+                    content: `Are you sure you want to delete schema "${row.name}"?`,
+                    okText: 'Delete',
+                    cancelText: 'Cancel',
+                    onOk: function() {
+                        that.deleteSchema(row);
+                    }
+                });
+            },
+            deleteSchema: function(row) {
+                var that = this;
+                $.ajax({
+                    url: '/api/hasura/schema/delete',
+                    type: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({
+                        env: that.envSearch,
+                        schemaName: row.name
+                    }),
+                    success: function(result) {
+                        if (result.code === 0) {
+                            that.$Notice.success({ desc: 'Schema deleted successfully' });
+                            that.search(false);
+                        } else {
+                            that.$Notice.error({ desc: result.msg || 'Delete failed' });
+                        }
+                    },
+                    error: function() {
+                        that.$Notice.error({ desc: 'Delete failed, please try again later' });
+                    }
+                });
+            },
+            refreshSchema: function(row) {
+                var that = this;
+                $.ajax({
+                    url: '/api/hasura/schema/refresh',
+                    type: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({
+                        env: that.envSearch,
+                        schemaName: row.name
+                    }),
+                    success: function(result) {
+                        if (result.code === 0) {
+                            that.$Notice.success({ desc: 'Schema refreshed successfully' });
+                            that.search(false);
+                        } else {
+                            that.$Notice.error({ desc: result.msg || 'Refresh failed' });
+                        }
+                    },
+                    error: function() {
+                        that.$Notice.error({ desc: 'Refresh failed, please try again later' });
+                    }
+                });
+            }
+        },
+        created : function() {
+            // this.fetchNamespace(false); // Remove this line, as fetchNamespace is not defined
+        }
+    })
+
+</script>
+</body>
+</html>
