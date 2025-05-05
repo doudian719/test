@@ -176,7 +176,7 @@ var vm = new Vue({
                 }
             });
         },
-        searchRepos: function() {
+        search: function() {
             if (!this.searchKeyword.trim()) {
                 this.loadAllRepos();
                 return;
@@ -248,7 +248,7 @@ var vm = new Vue({
         changePage: function(page) {
             this.pageNo = page;
             if (this.searchKeyword) {
-                this.searchRepos();
+                this.search();
             } else {
                 this.loadAllRepos();
             }
@@ -257,7 +257,7 @@ var vm = new Vue({
             this.pageSize = size;
             this.pageNo = 1;  // 重置为第一页
             if (this.searchKeyword) {
-                this.searchRepos();
+                this.search();
             } else {
                 this.loadAllRepos();
             }

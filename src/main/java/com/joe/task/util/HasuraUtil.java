@@ -190,13 +190,10 @@ public class HasuraUtil
                 .type("export_metadata")
                 .args(ImmutableMap.of())
                 .build();
-            
             String response = executeMetadataRequest(env, requestDto);
             JsonNode metadata = objectMapper.readTree(response);
-            
             List<RemoteSchema> schemas = new ArrayList<>();
             JsonNode remoteSchemasNode = metadata.path("remote_schemas");
-            
             if (remoteSchemasNode.isArray())
             {
                 for (JsonNode schemaNode : remoteSchemasNode)
@@ -208,7 +205,6 @@ public class HasuraUtil
                             continue;
                         }
                     }
-
                     schemas.add(RemoteSchema.builder()
                             .name(schemaNode.get("name").asText())
                             .url(schemaNode.path("definition").path("url").asText())
@@ -218,13 +214,12 @@ public class HasuraUtil
                             .build());
                 }
             }
-
-            // Enrich with schema health status
+            // Enrich with schema health status, only call getInconsistentRemoteSchemas once
+            List<JsonNode> inconsistentSchemas = getInconsistentRemoteSchemas(env);
             for (RemoteSchema schema : schemas)
             {
-                schema.setHealthStatus(getSchemaHealthStatus(env, schema.getName()));
+                schema.setHealthStatus(getSchemaHealthStatus(env, schema.getName(), inconsistentSchemas));
             }
-
             return schemas;
         } catch (Exception e) {
             log.error("Failed to list remote schemas in env {}", env, e);
@@ -232,56 +227,74 @@ public class HasuraUtil
         }
     }
 
-    public static SchemaHealthStatus getSchemaHealthStatus(String env, String schemaName) {
-        log.info("Checking health of remote schema {} in env {}", schemaName, env);
+    /**
+     * Get the set of inconsistent remote schema names from Hasura by calling get_inconsistent_metadata only once.
+     * @param env environment name
+     * @return set of inconsistent remote schema names
+     */
+    private static List<JsonNode> getInconsistentRemoteSchemas(String env) {
         try {
             HasuraRequestDto requestDto = HasuraRequestDto.builder()
-                    .type("get_remote_schema_health")
-                    .args(ImmutableMap.of("name", schemaName))
+                    .type("get_inconsistent_metadata")
+                    .args(ImmutableMap.of())
                     .build();
-
             String response = executeMetadataRequest(env, requestDto);
-            JsonNode healthStatus = objectMapper.readTree(response);
-
-            boolean isHealthy = healthStatus.path("status").asText("unhealthy").equals("healthy");
-            String details = "";
-
-            if (!isHealthy) {
-                JsonNode detailsNode = healthStatus.path("details");
-                if (!detailsNode.isMissingNode()) {
-                    details = detailsNode.toString();
-                } else {
-                    details = healthStatus.toString();
+            JsonNode result = objectMapper.readTree(response);
+            List<JsonNode> inconsistentSchemas = new ArrayList<>();
+            JsonNode objects = result.path("inconsistent_objects");
+            if (objects.isArray()) {
+                for (JsonNode obj : objects) {
+                    if ("remote_schema".equals(obj.path("type").asText())) {
+                        inconsistentSchemas.add(obj);
+                    }
                 }
             }
-
-            return new SchemaHealthStatus(schemaName, isHealthy, details);
+            return inconsistentSchemas;
         } catch (Exception e) {
-            log.error("Failed to check health of remote schema {} in env {}", schemaName, env, e);
-            return new SchemaHealthStatus(schemaName, false, "Error checking health status: " + e.getMessage());
+            log.error("Failed to get inconsistent remote schemas in env {}", env, e);
+            return Collections.emptyList();
         }
     }
 
+    /**
+     * Check the health status of a remote schema by checking if it is in the inconsistent remote schemas list.
+     * @param env environment name
+     * @param schemaName remote schema name
+     * @param inconsistentSchemas inconsistent remote schema nodes
+     * @return SchemaHealthStatus
+     */
+    public static SchemaHealthStatus getSchemaHealthStatus(String env, String schemaName, List<JsonNode> inconsistentSchemas) {
+        // Check if the schemaName is in the inconsistentSchemas list
+        for (JsonNode obj : inconsistentSchemas) {
+            String name = obj.path("definition").path("name").asText("");
+            if (schemaName.equals(name)) {
+                String reason = obj.path("reason").asText("");
+                String details = obj.path("message").path("message").asText("");
+                return new SchemaHealthStatus(schemaName, false, reason + ": " + details);
+            }
+        }
+        return new SchemaHealthStatus(schemaName, true, "");
+    }
+
+    /**
+     * Check the health status for all remote schemas in the environment, only call get_inconsistent_metadata once.
+     * @param env environment name
+     * @return list of SchemaHealthStatus
+     */
     public static List<SchemaHealthStatus> checkAllRemoteSchemasHealth(String env)
     {
         log.info("Checking health status for all remote schemas in env {}", env);
         List<SchemaHealthStatus> healthStatuses = new ArrayList<>();
-        
-        try
-        {
+        try {
             List<RemoteSchema> schemas = listRemoteSchemas(env, null);
-            
-            for (RemoteSchema schema : schemas)
-            {
-                healthStatuses.add(getSchemaHealthStatus(env, schema.getName()));
+            List<JsonNode> inconsistentSchemas = getInconsistentRemoteSchemas(env);
+            for (RemoteSchema schema : schemas) {
+                healthStatuses.add(getSchemaHealthStatus(env, schema.getName(), inconsistentSchemas));
             }
-        }
-        catch (Exception e)
-        {
+        } catch (Exception e) {
             log.error("Failed to list remote schemas in env {}", env, e);
             return Collections.emptyList();
         }
-        
         return healthStatuses;
     }
 
