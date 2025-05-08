@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Task Scheduler Manager</title>
+    <meta name="author" content="TSM" />
+    <meta name="site" content="https://blog.52itstyle.com" />
+    <link rel="stylesheet" th:href="@{/iview/iview.css}">
+    <script th:src="@{/libs/jquery-3.2.1.min.js}" type="text/javascript"></script>
+    <script th:src="@{/libs/vue.min.js}" type="text/javascript"></script>
+    <script th:src="@{/layer/layer.js}" type="text/javascript"></script>
+    <script th:src="@{/iview/iview.min.js}" type="text/javascript"></script>
+    <script th:src="@{/common.js}" type="text/javascript"></script>
+    <style type="text/css">
+        [v-cloak] {
+            display: none;
+        }
+        .json-viewer {
+            font-family: monospace;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            background-color: #f5f5f5;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+        .action-buttons {
+            display: flex;
+            gap: 8px;
+        }
+    </style>
+</head>
+<body>
+<div id="app" v-cloak>
+    <div style="margin-bottom: 6px;margin: 30px">
+        <i-select v-model="envSearch" @on-change="fetchNamespace()" placeHolder="Environment" style="width: 200px">
+            <i-option v-for="item in envOptions" :value="item.value" :key="item.value">
+                {{ item.label }}
+            </i-option>
+        </i-select>
+
+        <i-select v-model="namespaceSearch" 
+                 @on-change="search()" 
+                 placeHolder="Namespace" 
+                 filterable
+                 style="width: 200px">
+            <i-option v-for="item in namespaceOptions" :value="item.value" :key="item.value">
+                {{ item.label }}
+            </i-option>
+        </i-select>
+
+        <i-input v-model="crdNameSearch" @on-enter="search()" placeHolder="CRD Name" style="width: 200px"></i-input>
+
+        <i-button type="primary" @click="search()" icon="ios-search">Search</i-button>
+        <i-button type="primary" @click="empty()" icon="ios-close-empty">Clear</i-button>
+        <i-switch v-model="autoRefresh" 
+                 size="large" 
+                 @on-change="handleAutoRefreshChange"
+                 style="margin-left: 10px">
+            <span slot="open">Auto Refresh ON</span>
+            <span slot="close">Auto Refresh OFF</span>
+        </i-switch>
+    </div>
+    <div style="margin-bottom: 6px;margin: 30px">
+        <template>
+            <i-table border 
+                :content="self" 
+                :columns="tableTitle" 
+                :data="PageData">
+            </i-table>
+            <Page
+                :total="total"
+                :current="currentPage"
+                :page-size="pageSize"
+                show-total
+                show-elevator
+                show-sizer
+                @on-change="handlePageChange"
+                @on-page-size-change="handlePageSizeChange"
+                style="margin-top: 16px; text-align: right;"/>
+        </template>
+    </div>
+
+    <!-- CRD Details Modal -->
+    <Modal v-model="showCRDDetails" title="CRD Details" width="800">
+        <div class="json-viewer" v-html="formatJSON(currentCRD)"></div>
+        <div slot="footer">
+            <Button type="primary" @click="showCRDDetails = false">Close</Button>
+        </div>
+    </Modal>
+
+    <!-- CRD Instance Details Modal -->
+    <Modal v-model="showInstanceDetails" title="CRD Instance Details" width="800">
+        <div class="json-viewer" v-html="formatJSON(currentInstance)"></div>
+        <div slot="footer">
+            <Button type="primary" @click="showInstanceDetails = false">Close</Button>
+        </div>
+    </Modal>
+
+    <!-- Create/Edit CRD Modal -->
+    <Modal v-model="showCRDForm" :title="isEdit ? 'Edit CRD' : 'Create CRD'" width="800">
+        <Form :model="crdForm" :label-width="120">
+            <FormItem label="CRD Name">
+                <Input v-model="crdForm.name" placeholder="Enter CRD name"></Input>
+            </FormItem>
+            <FormItem label="CRD Definition">
+                <Input type="textarea" v-model="crdForm.definition" :rows="10" placeholder="Enter CRD definition in YAML format"></Input>
+            </FormItem>
+        </Form>
+        <div slot="footer">
+            <Button type="primary" @click="saveCRD">Save</Button>
+            <Button @click="showCRDForm = false">Cancel</Button>
+        </div>
+    </Modal>
+
+    <!-- Create/Edit CRD Instance Modal -->
+    <Modal v-model="showInstanceForm" :title="isEditInstance ? 'Edit CRD Instance' : 'Create CRD Instance'" width="800">
+        <Form :model="instanceForm" :label-width="120">
+            <FormItem label="Instance Name">
+                <Input v-model="instanceForm.name" placeholder="Enter instance name"></Input>
+            </FormItem>
+            <FormItem label="Instance Definition">
+                <Input type="textarea" v-model="instanceForm.definition" :rows="10" placeholder="Enter instance definition in YAML format"></Input>
+            </FormItem>
+        </Form>
+        <div slot="footer">
+            <Button type="primary" @click="saveInstance">Save</Button>
+            <Button @click="showInstanceForm = false">Cancel</Button>
+        </div>
+    </Modal>
+
+    <!-- CRD Instance List Modal -->
+    <Modal v-model="showInstanceList" title="CRD Instances" width="800">
+        <div style="margin-bottom: 10px">
+            <Button type="primary" @click="createInstance">Create Instance</Button>
+        </div>
+        <i-table border :columns="instanceColumns" :data="instanceData">
+            <template slot-scope="{ row }" slot="action">
+                <div class="action-buttons">
+                    <Button type="primary" size="small" icon="ios-eye" @click="viewInstanceDetails(row)">View</Button>
+                    <Button type="success" size="small" icon="ios-create" @click="editInstance(row)">Edit</Button>
+                    <Button type="error" size="small" icon="ios-trash" @click="deleteInstance(row)">Delete</Button>
+                </div>
+            </template>
+        </i-table>
+    </Modal>
+</div>
+<script type="text/javascript">
+    var vm = new Vue({
+        el : '#app',
+        data : {
+            envSearch : '',
+            namespaceSearch : '',
+            crdNameSearch: '',
+            envOptions: [],
+            namespaceOptions: [],
+            autoRefresh: false,
+            refreshTimer: null,
+            PageData : [],
+            showCRDDetails: false,
+            showInstanceDetails: false,
+            showCRDForm: false,
+            showInstanceForm: false,
+            showInstanceList: false,
+            currentCRD: null,
+            currentInstance: null,
+            isEdit: false,
+            isEditInstance: false,
+            crdForm: {
+                name: '',
+                definition: ''
+            },
+            instanceForm: {
+                name: '',
+                definition: ''
+            },
+            instanceData: [],
+            instanceColumns: [{
+                title: 'No.',
+                type: 'index',
+                width: 70,
+                align: 'center'
+            }, {
+                title: 'Name',
+                key: 'name',
+                width: 200
+            }, {
+                title: 'Namespace',
+                key: 'namespace',
+                width: 150
+            }, {
+                title: 'Action',
+                slot: 'action',
+                width: 200
+            }],
+            tableTitle: [{
+                title: 'No.',
+                type: 'index',
+                width: 70,
+                align: 'center'
+            }, {
+                title: 'Environment',
+                key: 'env',
+                width: 120
+            }, {
+                key: 'name',
+                title: 'CRD Name',
+                width: 320
+            }, {
+                key: 'group',
+                title: 'Group',
+                width: 260
+            }, {
+                key: 'version',
+                title: 'Version',
+                width: 120
+            }, {
+                key: 'scope',
+                title: 'Scope',
+                width: 160
+            }, {
+                title: 'Action',
+                key: 'action',
+                width: 300,
+                render: (h, params) => {
+                    return h('div', {
+                        class: 'action-buttons'
+                    }, [
+                        h('Button', {
+                            props: {
+                                type: 'primary',
+                                size: 'small',
+                                icon: 'ios-eye'
+                            },
+                            on: {
+                                click: () => {
+                                    vm.viewCRDDetails(params.row);
+                                }
+                            }
+                        }, 'View'),
+                        h('Button', {
+                            props: {
+                                type: 'success',
+                                size: 'small',
+                                icon: 'ios-create'
+                            },
+                            on: {
+                                click: () => {
+                                    vm.editCRD(params.row);
+                                }
+                            }
+                        }, 'Edit'),
+                        h('Button', {
+                            props: {
+                                type: 'error',
+                                size: 'small',
+                                icon: 'ios-trash'
+                            },
+                            on: {
+                                click: () => {
+                                    vm.deleteCRD(params.row);
+                                }
+                            }
+                        }, 'Delete'),
+                        h('Button', {
+                            props: {
+                                type: 'info',
+                                size: 'small',
+                                icon: 'ios-list'
+                            },
+                            on: {
+                                click: () => {
+                                    vm.viewInstances(params.row);
+                                }
+                            }
+                        }, 'Instances')
+                    ]);
+                }
+            }],
+            currentPage: 1,
+            pageSize: 10,
+            total: 0
+        },
+        mounted: function() {
+            this.loadEnvOptions();
+            this.currentPage = 1;
+            this.pageSize = 10;
+        },
+        methods: {
+            loadEnvOptions: function() {
+                $.ajax({
+                    url: "/system/env/visible?resourceType=K8S",
+                    type: "GET",
+                    success: (result) => {
+                        if (result.success) {
+                            this.envOptions = result.data.map(env => {
+                                return {
+                                    value: env.name,
+                                    label: env.name
+                                };
+                            });
+                            if (this.envSearch) {
+                                this.fetchNamespace();
+                            }
+                        } else {
+                            this.$Notice.error({ desc: 'Failed to load environment options: ' + result.msg });
+                        }
+                    },
+                    error: (xhr) => {
+                        this.$Notice.error({ desc: 'Failed to request environment options: ' + xhr.statusText });
+                    }
+                });
+            },
+            fetchNamespace: function (showNotice = false) {
+                $.ajax({
+                    url:"../kubernetes/namespaces",
+                    type:"post",
+                    data:{'env':this.envSearch},
+                    success: function(result) {
+                        vm.namespaceOptions = result.msg.pageData.map(function(item) {
+                            return {
+                                value: item.name,
+                                label: item.name
+                            };
+                        });
+                        if (showNotice) {
+                            vm.$Notice.success({
+                                desc: 'Namespace list loaded successfully'
+                            });
+                        }
+                    },
+                    error: function() {
+                        if (showNotice) {
+                            vm.$Notice.error({
+                                desc: 'Failed to load namespace list, please try again later'
+                            });
+                        }
+                    }
+                });
+            },
+            search: function(showNotice = true) {
+                if(vm.envSearch === '') {
+                    if (showNotice) {
+                        vm.$Notice.warning({
+                            desc: 'Please select environment first'
+                        });
+                    }
+                    return;
+                }
+                $.ajax({
+                    url:"../kubernetes/crd/list",
+                    type:"get",
+                    data:{
+                        'env': this.envSearch,
+                        'namespace': this.namespaceSearch,
+                        'keyword': this.crdNameSearch,
+                        'page': this.currentPage,
+                        'pageSize': this.pageSize
+                    },
+                    success: function(result) {
+                        if(result && result.msg && Array.isArray(result.msg.pageData)) {
+                            vm.PageData = result.msg.pageData.map(function(item) {
+                                return {
+                                    env: vm.envSearch,
+                                    name: item.metadata.name,
+                                    group: item.spec.group,
+                                    version: item.spec.versions[0].name,
+                                    scope: item.spec.scope,
+                                    raw: item
+                                };
+                            });
+                            vm.total = result.msg.totalCount;
+                        } else {
+                            vm.PageData = [];
+                            vm.total = 0;
+                        }
+                        if (showNotice) {
+                            vm.$Notice.success({
+                                desc: 'Data loaded successfully'
+                            });
+                        }
+                    },
+                    error: function() {
+                        if (showNotice) {
+                            vm.$Notice.error({
+                                desc: 'Failed to load data, please try again later'
+                            });
+                        }
+                    }
+                });
+            },
+            empty: function(){
+                this.namespaceSearch = '';
+                this.crdNameSearch = '';
+                this.fetchNamespace(true);
+            },
+            formatJSON: function(obj) {
+                if (!obj) return '';
+                return JSON.stringify(obj, null, 2)
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#039;')
+                    .replace(/\n/g, '<br>')
+                    .replace(/\s/g, '&nbsp;');
+            },
+            viewCRDDetails: function(row) {
+                this.currentCRD = row.raw;
+                this.showCRDDetails = true;
+            },
+            editCRD: function(row) {
+                this.isEdit = true;
+                this.crdForm.name = row.name;
+                this.crdForm.definition = JSON.stringify(row.raw, null, 2);
+                this.showCRDForm = true;
+            },
+            deleteCRD: function(row) {
+                this.$Modal.confirm({
+                    title: 'Delete CRD',
+                    content: `Are you sure you want to delete CRD "${row.name}"?`,
+                    onOk: () => {
+                        $.ajax({
+                            url: `../kubernetes/crd/${row.name}`,
+                            type: 'delete',
+                            data: { env: this.envSearch },
+                            success: (result) => {
+                                this.$Notice.success({
+                                    desc: 'CRD deleted successfully'
+                                });
+                                this.search(false);
+                            },
+                            error: (xhr) => {
+                                this.$Notice.error({
+                                    desc: 'Failed to delete CRD: ' + xhr.statusText
+                                });
+                            }
+                        });
+                    }
+                });
+            },
+            viewInstances: function(row) {
+                this.currentCRD = row;
+                this.showInstanceList = true;
+                this.fetchInstances(row);
+            },
+            fetchInstances: function(crd) {
+                $.ajax({
+                    url: `../kubernetes/crd/${crd.name}/instances`,
+                    type: 'get',
+                    data: {
+                        env: this.envSearch,
+                        namespace: this.namespaceSearch
+                    },
+                    success: (result) => {
+                        this.instanceData = result.map(item => {
+                            return {
+                                name: item.metadata.name,
+                                namespace: item.metadata.namespace,
+                                raw: item
+                            };
+                        });
+                    },
+                    error: (xhr) => {
+                        this.$Notice.error({
+                            desc: 'Failed to load CRD instances: ' + xhr.statusText
+                        });
+                    }
+                });
+            },
+            viewInstanceDetails: function(row) {
+                this.currentInstance = row.raw;
+                this.showInstanceDetails = true;
+            },
+            createInstance: function() {
+                this.isEditInstance = false;
+                this.instanceForm = {
+                    name: '',
+                    definition: ''
+                };
+                this.showInstanceForm = true;
+            },
+            editInstance: function(row) {
+                this.isEditInstance = true;
+                this.instanceForm = {
+                    name: row.name,
+                    definition: JSON.stringify(row.raw, null, 2)
+                };
+                this.showInstanceForm = true;
+            },
+            deleteInstance: function(row) {
+                this.$Modal.confirm({
+                    title: 'Delete CRD Instance',
+                    content: `Are you sure you want to delete instance "${row.name}"?`,
+                    onOk: () => {
+                        $.ajax({
+                            url: `../kubernetes/crd/${this.currentCRD.name}/instances/${row.name}`,
+                            type: 'delete',
+                            data: {
+                                env: this.envSearch,
+                                namespace: this.namespaceSearch
+                            },
+                            success: (result) => {
+                                this.$Notice.success({
+                                    desc: 'CRD instance deleted successfully'
+                                });
+                                this.fetchInstances(this.currentCRD);
+                            },
+                            error: (xhr) => {
+                                this.$Notice.error({
+                                    desc: 'Failed to delete CRD instance: ' + xhr.statusText
+                                });
+                            }
+                        });
+                    }
+                });
+            },
+            saveCRD: function() {
+                try {
+                    const crd = JSON.parse(this.crdForm.definition);
+                    const url = this.isEdit ? 
+                        `../kubernetes/crd/${this.crdForm.name}` : 
+                        '../kubernetes/crd';
+                    
+                    $.ajax({
+                        url: url,
+                        type: this.isEdit ? 'put' : 'post',
+                        data: {
+                            env: this.envSearch,
+                            crd: crd
+                        },
+                        success: (result) => {
+                            this.$Notice.success({
+                                desc: `CRD ${this.isEdit ? 'updated' : 'created'} successfully`
+                            });
+                            this.showCRDForm = false;
+                            this.search(false);
+                        },
+                        error: (xhr) => {
+                            this.$Notice.error({
+                                desc: `Failed to ${this.isEdit ? 'update' : 'create'} CRD: ` + xhr.statusText
+                            });
+                        }
+                    });
+                } catch (e) {
+                    this.$Notice.error({
+                        desc: 'Invalid JSON format: ' + e.message
+                    });
+                }
+            },
+            handleAutoRefreshChange: function(status) {
+                if (status) {
+                    this.refreshTimer = setInterval(() => {
+                        this.search(false);
+                    }, 5000);
+                    this.$Notice.info({
+                        desc: 'Auto refresh enabled (every 5 seconds)'
+                    });
+                } else {
+                    if (this.refreshTimer) {
+                        clearInterval(this.refreshTimer);
+                        this.refreshTimer = null;
+                    }
+                    this.$Notice.info({
+                        desc: 'Auto refresh disabled'
+                    });
+                }
+            },
+            saveInstance: function() {
+                try {
+                    const instance = JSON.parse(this.instanceForm.definition);
+                    const url = this.isEditInstance ? 
+                        `../kubernetes/crd/${this.currentCRD.name}/instances/${this.instanceForm.name}` : 
+                        `../kubernetes/crd/${this.currentCRD.name}/instances`;
+                    
+                    $.ajax({
+                        url: url,
+                        type: this.isEditInstance ? 'put' : 'post',
+                        data: {
+                            env: this.envSearch,
+                            namespace: this.namespaceSearch,
+                            instance: instance
+                        },
+                        success: (result) => {
+                            this.$Notice.success({
+                                desc: `CRD instance ${this.isEditInstance ? 'updated' : 'created'} successfully`
+                            });
+                            this.showInstanceForm = false;
+                            this.fetchInstances(this.currentCRD);
+                        },
+                        error: (xhr) => {
+                            this.$Notice.error({
+                                desc: `Failed to ${this.isEditInstance ? 'update' : 'create'} CRD instance: ` + xhr.statusText
+                            });
+                        }
+                    });
+                } catch (e) {
+                    this.$Notice.error({
+                        desc: 'Invalid JSON format: ' + e.message
+                    });
+                }
+            },
+            handlePageChange: function(page) {
+                this.currentPage = page;
+                this.search(false);
+            },
+            handlePageSizeChange: function(size) {
+                this.pageSize = size;
+                this.currentPage = 1;
+                this.search(false);
+            }
+        },
+        beforeDestroy: function() {
+            if (this.refreshTimer) {
+                clearInterval(this.refreshTimer);
+                this.refreshTimer = null;
+            }
+        }
+    });
+</script>
+</body>
+</html> 

@@ -1,0 +1,9 @@
+application.properties
+
+
+
+Removed:
+hasuraproperties.java
+JenkinsConstants.java
+EnvConfigServiceImpl.java
+application-hasura.yaml
